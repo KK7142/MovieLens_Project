@@ -1,0 +1,152 @@
+---
+title: "MovieLens_Report.Rmd"
+author: "Kristine Konkol"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+header-includes:
+  - \usepackage{float}
+  - \usepackage{booktabs}
+  - \def\FloatBarrier{\def\@captype{table}\vspace*{3pt}}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(ggplot2)
+library(kableExtra)
+```
+
+```{r load-data, include=FALSE}
+# Run the data preparation script
+source("MovieLens_Script.R")
+```
+
+## **1. Introduction**  
+This report analyzes the MovieLens dataset containing `r format(nrow(edx), big.mark=",")` ratings from `r n_distinct(edx$userId)` users on `r n_distinct(edx$movieId)` movies. The goal goal was to build a recommendation system that predicts movie ratings with an RMSE below 0.86490. This report achieves an RMSE = `r round(rmse_v5, 5)` in the final holdout test, which successfully met the project requirement of RMSE < 0.86490. Four progressive model improvements were tested:
+
+1. **Baseline** (average rating)
+2. **Movie effects** (some movies are rated higher/lower)
+3. **User effects** (some users rate higher/lower)
+4. **Regularization** (fixing overfitting)
+
+## **2. Methods & Analysis**
+
+### Data Preparation
+The dataset was split into Training (90% of edx set) and Validation (10% of edx set) components. The Final Holdout Test (preserved untouched until final evaluation) prevented data leakage during model development. 
+
+### Data Exploration
+First, the data was examined and the following was determined:
+
+ - Most ratings are clustered at whole numbers (Figure 1)  
+ - Most movies have <100 ratings, but some have thousands (Figure 2)  
+ - Some users rate hundreds of movies (Figure 3)  
+ - The average rating is `r round(mean(edx$rating), 2)` stars  
+
+```{r rating-distribution, fig.pos="H", out.extra='', fig.cap="Distribution of Movie Ratings"}
+ggplot(edx, aes(x = rating)) + 
+  geom_histogram(binwidth = 0.5, fill = "blue", color = "black") +
+  ggtitle("Distribution of Movie Ratings") +
+  xlab("Rating") + ylab("Count")
+```
+
+```{r average-movie-ratings, fig.pos="H", out.extra='', fig.cap="Number of Ratings Per Movie"}
+edx %>% 
+  count(movieId) %>% 
+  ggplot(aes(n)) + 
+  geom_histogram(bins = 30, fill = "darkgreen") +
+  scale_x_log10() + 
+  ggtitle("Number of Ratings Per Movie") +
+  xlab("Number of Ratings (log scale)") + ylab("Count")
+```
+
+```{r movie-ratings-per-user, fig.pos="H", out.extra='', fig.cap="Number of Ratings Per User"}
+edx %>% 
+  count(userId) %>% 
+  ggplot(aes(n)) + 
+  geom_histogram(bins = 30, fill = "violet") +
+  scale_x_log10() + 
+  ggtitle("Number of Ratings Per User") +
+  xlab("Number of Ratings (log scale)") + ylab("Count")
+```
+
+### Modeling Approach
+The model was progressively improved through four refinements, which sequentially addressed specific limitations of each model version. The goal was to get the best RMSE but avoid overfitting.
+
+1. **Baseline** Started with average rating (`RMSE = `r round(rmse_v1, 5)`)  
+  - Predicted all ratings as the global mean ($\mu = `r round(mean(train_set$rating), 2)`$), which established a benchmark to quantify improvement for subsequent models  
+  - This approach (Version 1, v.1) avoided complexity but performed poorly by ignoring all movie-user interactions  
+2. **Movie Effects** Added movie bias effects, which accounted for some movies being consistently rated higher/lower (better by `r round(rmse_v1-rmse_v2, 5)`) 
+  - This approach (v.2) accounted for inherent quality differences in movies (obscure films vs. blockbusters), and showed an improvement in the modeling approach  
+3. **User Effects** Added user bias effects, which adjusted for users who tended to rate higher/lower than average (better by `r round(rmse_v2-rmse_v3, 5)`)  
+  - This approach (v.3) corrected for bias from generous and/or harsh raters  
+4. **Regularized** Used regularization (best λ = `r lambda`) which penalized extreme values from movies/users with few ratings (better by `r round(rmse_v3-rmse_v4, 5)`)  
+  - This approach (v.4) avoided overfitting to rare ratings  
+  - The tuning process of the entire modeling approach (v.1-v.4) is shown in Figure 4  
+
+```{r results-development, fig.pos="H", out.extra='', fig.cap="RMSE Comparison of Improvement Across Model Versions"}
+rmse_results <- data.frame(
+  Version = factor(c("v.1", "v.2", "v.3", "v.4"), 
+                  levels = c("v.1", "v.2", "v.3", "v.4")),
+  RMSE = c(rmse_v1, rmse_v2, rmse_v3, rmse_v4)
+)
+
+ggplot(rmse_results, aes(x = Version, y = RMSE, fill = Version)) +
+  geom_col() +
+  geom_text(aes(label = round(RMSE, 5)), vjust = -0.5) +
+  labs(title = "Development Set Performance", y = "RMSE") +
+  ylim(0, 1.1) +
+  theme_minimal() +
+  theme(legend.position = "none")
+```  
+
+## **3. Results**
+The final validation on the holdout set showed that the model performed well (Table 1).
+
+```{r}
+results <- data.frame(
+  Model = c("1. Baseline", "2. +Movies", "3. +Users", "4. Regularized", "5. Final Test"),
+  RMSE = c(rmse_v1, rmse_v2, rmse_v3, rmse_v4, rmse_v5),
+  Improvement = c("--", 
+                sprintf("%.5f", rmse_v1-rmse_v2),
+                sprintf("%.5f", rmse_v2-rmse_v3),
+                sprintf("%.5f", rmse_v3-rmse_v4),
+                sprintf("%.5f", rmse_v4-rmse_v5))
+)
+
+kable(results, caption = "Model Performance Summary") %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  column_spec(2, bold = TRUE) %>%
+  row_spec(5, bold = TRUE, color = "white", background = "gray")
+```  
+
+### Model Development Performance
+
+The final test came from predictions on the previously unseen holdout set (Table 2).This RMSE = `r round(rmse_v5, 5)` was less than the required RMSE below 0.86490, which fully met the requirements of the data analysis project.
+
+```{r final-test-results}
+results <- data.frame(
+  Stage = c("Development (v.4)", "Final Test (v.5)"),
+  RMSE = c(rmse_v4, rmse_v5),
+  Difference = c("--", 
+                sprintf("%.5f", rmse_v4-rmse_v5))
+)
+
+kable(results, caption = "Final Holdout Test Results") %>%
+  kable_styling(full_width = FALSE) %>%
+  row_spec(2, bold = TRUE, background = "gray")
+```
+
+**Key Findings**: Some of the findings of the project included the following:
+
+ - Accounting for movie bias effects provided the largest improvement (`r round(rmse_v1-rmse_v2, 5)` RMSE reduction)  
+ - Adding user effects reduced RMSE by `r round(rmse_v2 - rmse_v3, 5)`.
+ - Regularization gave a small but crucial improvement (`r round(rmse_v3-rmse_v4, 5)` RMSE reduction)  
+ - Final model achieved RMSE = `r round(rmse_v5, 5)` on unseen data, which was below RMSE 0.86490  
+
+## **4. Conclusion**  
+The recommendation system successfully predicts ratings with **RMSE = `r round(rmse_v5, 5)`** on unseen data, which fully met the requirement of the project to achieve an RMSE below 0.86490. Some of the limitations of this model include that it doesn't account for user tastes changing over time, it treats all genres equally, and it is simpler than commercial systems used in industry. Future work could include accounting for better performance, including incorporating genre preferences and considering rating trends over time. 
+
+## **5. Acknowledgement** 
+In the creation of this report, generative AI (ChatGPT) was used sparingly and exclusively for technical troubleshooting purposes. The AI assisted solely with: 1) resolving .Rmd file formatting errors, 2) correcting PDF compilation issues, and 3) improving visual presentation elements. All data analysis, methodology development, results interpretation, and significant writing were completed independently by the author without AI assistance. The AI was consulted only when encountering technical roadblocks unfamiliar to the novice R Markdown user, serving as a supplemental debugging tool rather than a content contributor.
